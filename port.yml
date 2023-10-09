@@ -1,0 +1,5 @@
+blueprint: service
+title: Packages
+identifier: my-python-packages
+properties:
+  content: file://./requirements.txt
