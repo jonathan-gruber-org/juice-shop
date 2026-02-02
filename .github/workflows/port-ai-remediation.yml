@@ -223,7 +223,7 @@ jobs:
             (Claude Code integration ready - enable with ANTHROPIC_API_KEY)
           branch: fix/security-remediation-${{ github.run_id }}
           base: master
-          title: "🔒 Security: AI remediation for ${{ env.ENTITY_TITLE }}"
+          title: "✨ Port Security: AI remediation for juice-shop"
           body: |
             ## 🤖 AI-Powered Security Remediation
             
