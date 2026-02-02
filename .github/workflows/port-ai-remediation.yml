@@ -6,6 +6,9 @@ on:
       port_context:
         description: 'Port context (JSON with runId, entity, etc.)'
         required: true
+      security_insights:
+        description: 'Security insights/vulnerability report from Port'
+        required: true
 
 permissions:
   contents: write
@@ -35,18 +38,15 @@ jobs:
           PORT_RUN_ID=$(echo "$PORT_CONTEXT" | jq -r '.runId // empty')
           ENTITY_ID=$(echo "$PORT_CONTEXT" | jq -r '.entity.identifier // empty')
           ENTITY_TITLE=$(echo "$PORT_CONTEXT" | jq -r '.entity.title // empty')
-          BLUEPRINT_ID=$(echo "$PORT_CONTEXT" | jq -r '.entity.blueprint // "githubRepository"')
           
           echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
           echo "ENTITY_ID=$ENTITY_ID" >> $GITHUB_ENV
           echo "ENTITY_TITLE=$ENTITY_TITLE" >> $GITHUB_ENV
-          echo "BLUEPRINT_ID=$BLUEPRINT_ID" >> $GITHUB_ENV
           
           echo "=== Extracted Values ==="
           echo "Run ID: $PORT_RUN_ID"
           echo "Entity ID: $ENTITY_ID"
           echo "Entity Title: $ENTITY_TITLE"
-          echo "Blueprint: $BLUEPRINT_ID"
 
       - name: Log remediation start to Port
         if: env.PORT_RUN_ID != ''
@@ -59,53 +59,15 @@ jobs:
           runId: ${{ env.PORT_RUN_ID }}
           logMessage: "🤖 Starting AI security remediation for **${{ env.ENTITY_TITLE }}**..."
 
-      - name: Fetch security_insights from Port entity
-        id: fetch_insights
+      - name: Save security insights to file
         env:
-          PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
-          PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
+          SECURITY_INSIGHTS: ${{ github.event.inputs.security_insights }}
         run: |
-          echo "🔍 Fetching security_insights from Port entity..."
-          
-          # Get Port access token
-          TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
-            -H "Content-Type: application/json" \
-            -d "{\"clientId\": \"$PORT_CLIENT_ID\", \"clientSecret\": \"$PORT_CLIENT_SECRET\"}")
-          
-          ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
-          
-          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" == "null" ]; then
-            echo "❌ Failed to get Port access token"
-            echo "security_insights=" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          # Fetch entity from Port using githubRepository blueprint
-          ENTITY_RESPONSE=$(curl -s -X GET \
-            "https://api.getport.io/v1/blueprints/${{ env.BLUEPRINT_ID }}/entities/${{ env.ENTITY_ID }}" \
-            -H "Authorization: Bearer $ACCESS_TOKEN" \
-            -H "Content-Type: application/json")
-          
-          echo "=== Entity Response ==="
-          echo "$ENTITY_RESPONSE" | jq '.'
-          
-          # Extract security_insights property
-          SECURITY_INSIGHTS=$(echo "$ENTITY_RESPONSE" | jq -r '.entity.properties.security_insights // empty')
-          
-          if [ -z "$SECURITY_INSIGHTS" ] || [ "$SECURITY_INSIGHTS" == "null" ]; then
-            echo "⚠️ No security_insights found on entity, using default report"
-            SECURITY_INSIGHTS="No security insights available from Port. Please run a security scan first."
-          fi
-          
-          # Save to file for later use (handles multiline content)
           echo "$SECURITY_INSIGHTS" > /tmp/security_insights.md
-          
-          echo "=== Security Insights ==="
+          echo "=== Security Insights from Port ==="
           cat /tmp/security_insights.md
-          echo ""
-          echo "has_insights=true" >> $GITHUB_OUTPUT
 
-      - name: Log insights fetched to Port
+      - name: Log insights received to Port
         if: env.PORT_RUN_ID != ''
         uses: port-labs/port-github-action@v1
         with:
@@ -114,7 +76,7 @@ jobs:
           baseUrl: https://api.getport.io
           operation: PATCH_RUN
           runId: ${{ env.PORT_RUN_ID }}
-          logMessage: "📋 Retrieved security insights from Port entity. Analyzing vulnerabilities..."
+          logMessage: "📋 Received security insights from Port. Analyzing vulnerabilities..."
 
       # ============================================================================
       # REAL CLAUDE CODE INTEGRATION (uncomment when ANTHROPIC_API_KEY is available)
@@ -271,17 +233,7 @@ jobs:
             
             ### 📋 Security Insights from Port
             
-            The following security issues were identified and remediated:
-            
-            | Package | Old Version | New Version | Issue |
-            |---------|-------------|-------------|-------|
-            | `express-jwt` | 0.1.3 | ^8.4.1 | Auth bypass vulnerabilities |
-            | `jsonwebtoken` | 0.4.0 | ^9.0.2 | CVE-2022-23529, CVE-2022-23540, CVE-2022-23541 |
-            | `sanitize-html` | 1.4.2 | ^2.11.0 | XSS vulnerabilities |
-            | `express` | ^4.0.1 | ^4.21.0 | Path traversal, DoS |
-            | `socket.io` | ^2.3.0 | ^4.7.4 | Multiple security issues |
-            | `sequelize` | ^5.22.3 | ^6.35.2 | SQL injection risks |
-            | `node-fetch` | 2.1.2 | ^2.7.0 | Redirect bypass |
+            ${{ github.event.inputs.security_insights }}
             
             ---
             
