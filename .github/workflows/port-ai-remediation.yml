@@ -19,6 +19,12 @@ jobs:
   remediate:
     name: AI-Powered Security Remediation
     runs-on: ubuntu-latest
+    env:
+      # Define once at job level so every step can use it reliably.
+      # Port sends `port_context` as a JSON string; `fromJson` is more robust than parsing with jq.
+      PORT_RUN_ID: ${{ fromJson(inputs.port_context).runId }}
+      ENTITY_ID: ${{ fromJson(inputs.port_context).entity.identifier }}
+      ENTITY_TITLE: ${{ fromJson(inputs.port_context).entity.title }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,30 +32,21 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GH_PAT }}
 
-      - name: Extract Port Context
-        id: port_context
+      - name: Debug Port Context (optional)
         env:
-          PORT_CONTEXT: ${{ github.event.inputs.port_context }}
+          PORT_CONTEXT: ${{ inputs.port_context }}
         run: |
-          echo "=== Port Context ==="
+          echo "=== Port Context (raw) ==="
           echo "$PORT_CONTEXT"
-          echo "========================"
+          echo "=========================="
 
-          PORT_RUN_ID=$(echo "$PORT_CONTEXT" | jq -r '.runId // empty')
-          ENTITY_ID=$(echo "$PORT_CONTEXT" | jq -r '.entity.identifier // empty')
-          ENTITY_TITLE=$(echo "$PORT_CONTEXT" | jq -r '.entity.title // empty')
-
-          echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
-          echo "ENTITY_ID=$ENTITY_ID" >> $GITHUB_ENV
-          echo "ENTITY_TITLE=$ENTITY_TITLE" >> $GITHUB_ENV
-
-          echo "=== Extracted Values ==="
+          echo "=== Parsed (job env) ==="
           echo "Run ID: $PORT_RUN_ID"
           echo "Entity ID: $ENTITY_ID"
           echo "Entity Title: $ENTITY_TITLE"
 
       - name: Log remediation start to Port
-        if: env.PORT_RUN_ID != ''
+        if: ${{ env.PORT_RUN_ID != '' }}
         uses: port-labs/port-github-action@v1
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
@@ -64,14 +61,14 @@ jobs:
 
       - name: Save security insights to file
         env:
-          SECURITY_INSIGHTS: ${{ github.event.inputs.security_insights }}
+          SECURITY_INSIGHTS: ${{ inputs.security_insights }}
         run: |
           echo "$SECURITY_INSIGHTS" > /tmp/security_insights.md
           echo "=== Security Insights from Port ==="
           cat /tmp/security_insights.md
 
       - name: Log insights received to Port
-        if: env.PORT_RUN_ID != ''
+        if: ${{ env.PORT_RUN_ID != '' }}
         uses: port-labs/port-github-action@v1
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
@@ -142,7 +139,7 @@ jobs:
           echo "✅ Security fixes applied to package.json"
 
       - name: Log AI analysis to Port
-        if: env.PORT_RUN_ID != ''
+        if: ${{ env.PORT_RUN_ID != '' }}
         uses: port-labs/port-github-action@v1
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
@@ -169,7 +166,7 @@ jobs:
           fi
 
       - name: Log PR creation start to Port
-        if: steps.changes.outputs.has_changes == 'true' && env.PORT_RUN_ID != ''
+        if: ${{ steps.changes.outputs.has_changes == 'true' && env.PORT_RUN_ID != '' }}
         uses: port-labs/port-github-action@v1
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
@@ -222,7 +219,7 @@ jobs:
 
             ### 📋 Security Insights from Port
 
-            ${{ github.event.inputs.security_insights }}
+            ${{ inputs.security_insights }}
 
             ---
 
@@ -244,7 +241,7 @@ jobs:
           author: Port AI Remediation Bot <port-ai-bot@getport.io>
 
       - name: Log PR completed to Port
-        if: steps.changes.outputs.has_changes == 'true' && steps.create_pr.outputs.pull-request-url != '' && env.PORT_RUN_ID != ''
+        if: ${{ steps.changes.outputs.has_changes == 'true' && steps.create_pr.outputs.pull-request-url != '' && env.PORT_RUN_ID != '' }}
         uses: port-labs/port-github-action@v1
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
@@ -257,7 +254,7 @@ jobs:
             - URL: ${{ steps.create_pr.outputs.pull-request-url }}
 
       - name: Finalize Port run - Success
-        if: steps.changes.outputs.has_changes == 'true' && steps.create_pr.outputs.pull-request-url != '' && env.PORT_RUN_ID != ''
+        if: ${{ steps.changes.outputs.has_changes == 'true' && steps.create_pr.outputs.pull-request-url != '' && env.PORT_RUN_ID != '' }}
         uses: port-labs/port-github-action@v1
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
@@ -280,7 +277,7 @@ jobs:
           logMessage: "🎉 AI remediation complete! PR ready for review."
 
       - name: Finalize Port run - No Changes
-        if: steps.changes.outputs.has_changes != 'true' && env.PORT_RUN_ID != ''
+        if: ${{ steps.changes.outputs.has_changes != 'true' && env.PORT_RUN_ID != '' }}
         uses: port-labs/port-github-action@v1
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
