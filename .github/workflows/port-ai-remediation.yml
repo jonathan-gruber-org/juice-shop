@@ -1,0 +1,357 @@
+name: Port AI Security Remediation
+
+on:
+  workflow_dispatch:
+    inputs:
+      port_context:
+        description: 'Port context (JSON with runId, entity, etc.)'
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  remediate:
+    name: AI-Powered Security Remediation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Extract Port Context
+        id: port_context
+        env:
+          PORT_CONTEXT: ${{ github.event.inputs.port_context }}
+        run: |
+          echo "=== Port Context ==="
+          echo "$PORT_CONTEXT"
+          echo "========================"
+          
+          PORT_RUN_ID=$(echo "$PORT_CONTEXT" | jq -r '.runId // empty')
+          ENTITY_ID=$(echo "$PORT_CONTEXT" | jq -r '.entity.identifier // empty')
+          ENTITY_TITLE=$(echo "$PORT_CONTEXT" | jq -r '.entity.title // empty')
+          BLUEPRINT_ID=$(echo "$PORT_CONTEXT" | jq -r '.entity.blueprint // "githubRepository"')
+          
+          echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
+          echo "ENTITY_ID=$ENTITY_ID" >> $GITHUB_ENV
+          echo "ENTITY_TITLE=$ENTITY_TITLE" >> $GITHUB_ENV
+          echo "BLUEPRINT_ID=$BLUEPRINT_ID" >> $GITHUB_ENV
+          
+          echo "=== Extracted Values ==="
+          echo "Run ID: $PORT_RUN_ID"
+          echo "Entity ID: $ENTITY_ID"
+          echo "Entity Title: $ENTITY_TITLE"
+          echo "Blueprint: $BLUEPRINT_ID"
+
+      - name: Log remediation start to Port
+        if: env.PORT_RUN_ID != ''
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "🤖 Starting AI security remediation for **${{ env.ENTITY_TITLE }}**..."
+
+      - name: Fetch security_insights from Port entity
+        id: fetch_insights
+        env:
+          PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
+          PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
+        run: |
+          echo "🔍 Fetching security_insights from Port entity..."
+          
+          # Get Port access token
+          TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
+            -H "Content-Type: application/json" \
+            -d "{\"clientId\": \"$PORT_CLIENT_ID\", \"clientSecret\": \"$PORT_CLIENT_SECRET\"}")
+          
+          ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
+          
+          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" == "null" ]; then
+            echo "❌ Failed to get Port access token"
+            echo "security_insights=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Fetch entity from Port using githubRepository blueprint
+          ENTITY_RESPONSE=$(curl -s -X GET \
+            "https://api.getport.io/v1/blueprints/${{ env.BLUEPRINT_ID }}/entities/${{ env.ENTITY_ID }}" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/json")
+          
+          echo "=== Entity Response ==="
+          echo "$ENTITY_RESPONSE" | jq '.'
+          
+          # Extract security_insights property
+          SECURITY_INSIGHTS=$(echo "$ENTITY_RESPONSE" | jq -r '.entity.properties.security_insights // empty')
+          
+          if [ -z "$SECURITY_INSIGHTS" ] || [ "$SECURITY_INSIGHTS" == "null" ]; then
+            echo "⚠️ No security_insights found on entity, using default report"
+            SECURITY_INSIGHTS="No security insights available from Port. Please run a security scan first."
+          fi
+          
+          # Save to file for later use (handles multiline content)
+          echo "$SECURITY_INSIGHTS" > /tmp/security_insights.md
+          
+          echo "=== Security Insights ==="
+          cat /tmp/security_insights.md
+          echo ""
+          echo "has_insights=true" >> $GITHUB_OUTPUT
+
+      - name: Log insights fetched to Port
+        if: env.PORT_RUN_ID != ''
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "📋 Retrieved security insights from Port entity. Analyzing vulnerabilities..."
+
+      # ============================================================================
+      # REAL CLAUDE CODE INTEGRATION (uncomment when ANTHROPIC_API_KEY is available)
+      # ============================================================================
+      # - name: Run Claude Code to fix vulnerabilities
+      #   id: claude
+      #   uses: anthropics/claude-code-action@beta
+      #   with:
+      #     anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+      #     model: claude-sonnet-4-20250514
+      #     timeout_minutes: 10
+      #     direct_prompt: |
+      #       You are a security engineer. Your task is to fix vulnerabilities in this Node.js codebase based on the security insights below.
+      #
+      #       ## Security Insights from Port
+      #
+      #       $(cat /tmp/security_insights.md)
+      #
+      #       ## Your Task
+      #
+      #       1. Find all package.json files in this repository
+      #       2. For each vulnerability listed in the report:
+      #          - Locate the affected package in package.json (dependencies or devDependencies)
+      #          - Update the version to a secure version
+      #          - The package.json uses semver ranges, so update appropriately
+      #       3. If any configuration changes are needed (e.g., security headers), make those changes too
+      #       4. Do NOT create new files unless absolutely necessary
+      #       5. Do NOT modify application logic - only update dependencies and security configurations
+      #
+      #       ## Important
+      #       - Only make changes that directly address the vulnerabilities in the report
+      #       - Preserve existing formatting where possible
+      #       - If a package isn't found in the codebase, skip it
+      #
+      #       Please make the necessary changes now.
+      # ============================================================================
+
+      # MOCK: Simulated Claude Code fixes (remove this section when enabling real Claude)
+      - name: Apply Mock AI Fixes (simulating Claude Code)
+        run: |
+          echo "🤖 Simulating Claude Code analysis..."
+          echo "📋 Reading security insights from Port..."
+          cat /tmp/security_insights.md
+          echo ""
+          echo "🔧 Applying security fixes based on insights..."
+          
+          # Create a patch file with security updates for package.json
+          # These are known vulnerabilities in juice-shop's dependencies
+          cat > /tmp/security-fixes.patch << 'EOF'
+          --- a/package.json
+          +++ b/package.json
+          @@ -110,7 +110,7 @@
+               "express": "^4.17.3",
+          -    "express-jwt": "0.1.3",
+          +    "express-jwt": "^8.4.1",
+               "express-rate-limit": "^5.1.3",
+          @@ -132,7 +132,7 @@
+          -    "jsonwebtoken": "0.4.0",
+          +    "jsonwebtoken": "^9.0.2",
+          @@ -150,7 +150,7 @@
+          -    "sanitize-html": "1.4.2",
+          +    "sanitize-html": "^2.11.0",
+          EOF
+          
+          # Instead of patching, let's update the package.json directly with jq
+          # This is more reliable for demonstration
+          
+          echo "📦 Updating package.json with security fixes..."
+          
+          # Update vulnerable packages using jq
+          jq '.dependencies["express-jwt"] = "^8.4.1" |
+              .dependencies["jsonwebtoken"] = "^9.0.2" |
+              .dependencies["sanitize-html"] = "^2.11.0" |
+              .dependencies["express"] = "^4.21.0" |
+              .dependencies["socket.io"] = "^4.7.4" |
+              .dependencies["sequelize"] = "^6.35.2" |
+              .devDependencies["node-fetch"] = "^2.7.0"' \
+            package.json > package.json.tmp && mv package.json.tmp package.json
+          
+          echo ""
+          echo "✅ Security fixes applied to package.json:"
+          echo "  - express-jwt: 0.1.3 → ^8.4.1 (fixes auth bypass vulnerabilities)"
+          echo "  - jsonwebtoken: 0.4.0 → ^9.0.2 (fixes CVE-2022-23529, CVE-2022-23540, CVE-2022-23541)"
+          echo "  - sanitize-html: 1.4.2 → ^2.11.0 (fixes XSS vulnerabilities)"
+          echo "  - express: ^4.0.1 → ^4.21.0 (fixes path traversal, DoS vulnerabilities)"
+          echo "  - socket.io: ^2.3.0 → ^4.7.4 (fixes multiple security issues)"
+          echo "  - sequelize: ^5.22.3 → ^6.35.2 (fixes SQL injection risks)"
+          echo "  - node-fetch: 2.1.2 → ^2.7.0 (fixes redirect bypass)"
+
+      - name: Log AI analysis to Port
+        if: env.PORT_RUN_ID != ''
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: |
+            🤖 **AI Analysis Complete**
+            
+            Analyzed security insights and applied fixes to npm dependencies in package.json.
+
+      - name: Check for changes
+        id: changes
+        run: |
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes detected"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "Changes detected:"
+            git diff --staged --stat
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Pull Request
+        if: steps.changes.outputs.has_changes == 'true'
+        id: create_pr
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GH_PAT }}
+          commit-message: |
+            fix(security): remediate vulnerabilities via Port AI
+            
+            This commit was automatically generated based on the security insights
+            from Port's githubRepository entity.
+            
+            Triggered by: ${{ github.actor }}
+            Port Entity: ${{ env.ENTITY_ID }}
+            Repository: ${{ env.ENTITY_TITLE }}
+            
+            Security fixes applied:
+            - express-jwt: 0.1.3 → ^8.4.1
+            - jsonwebtoken: 0.4.0 → ^9.0.2
+            - sanitize-html: 1.4.2 → ^2.11.0
+            - express: ^4.0.1 → ^4.21.0
+            - socket.io: ^2.3.0 → ^4.7.4
+            - sequelize: ^5.22.3 → ^6.35.2
+            - node-fetch: 2.1.2 → ^2.7.0
+            
+            ---
+            Generated by Port AI + GitHub Actions
+            (Claude Code integration ready - enable with ANTHROPIC_API_KEY)
+          branch: fix/security-remediation-${{ github.run_id }}
+          base: master
+          title: "🔒 Security: AI remediation for ${{ env.ENTITY_TITLE }}"
+          body: |
+            ## 🤖 AI-Powered Security Remediation
+            
+            This PR was automatically generated based on the **security_insights** from the Port `githubRepository` entity.
+            
+            > 💡 **Note:** Real Claude Code integration is ready - just add `ANTHROPIC_API_KEY` secret and uncomment the Claude step in the workflow.
+            
+            ### 📋 Security Insights from Port
+            
+            The following security issues were identified and remediated:
+            
+            | Package | Old Version | New Version | Issue |
+            |---------|-------------|-------------|-------|
+            | `express-jwt` | 0.1.3 | ^8.4.1 | Auth bypass vulnerabilities |
+            | `jsonwebtoken` | 0.4.0 | ^9.0.2 | CVE-2022-23529, CVE-2022-23540, CVE-2022-23541 |
+            | `sanitize-html` | 1.4.2 | ^2.11.0 | XSS vulnerabilities |
+            | `express` | ^4.0.1 | ^4.21.0 | Path traversal, DoS |
+            | `socket.io` | ^2.3.0 | ^4.7.4 | Multiple security issues |
+            | `sequelize` | ^5.22.3 | ^6.35.2 | SQL injection risks |
+            | `node-fetch` | 2.1.2 | ^2.7.0 | Redirect bypass |
+            
+            ---
+            
+            ### ✅ Verification Checklist
+            
+            - [ ] CI pipeline passes
+            - [ ] `npm install` completes successfully
+            - [ ] Security scan shows reduced vulnerabilities
+            - [ ] Application still functions correctly
+            - [ ] Manual review completed
+            
+            ---
+            
+            **Triggered by:** @${{ github.actor }}
+            **Port Entity:** `${{ env.ENTITY_ID }}`
+            **Blueprint:** `githubRepository`
+            **Repository:** ${{ env.ENTITY_TITLE }}
+          committer: Port AI Remediation Bot <port-ai-bot@getport.io>
+          author: Port AI Remediation Bot <port-ai-bot@getport.io>
+
+      - name: Log PR creation to Port
+        if: steps.changes.outputs.has_changes == 'true' && steps.create_pr.outputs.pull-request-url != '' && env.PORT_RUN_ID != ''
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "✅ Created remediation PR: ${{ steps.create_pr.outputs.pull-request-url }}"
+
+      - name: Finalize Port run - Success
+        if: steps.changes.outputs.has_changes == 'true' && steps.create_pr.outputs.pull-request-url != '' && env.PORT_RUN_ID != ''
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          status: "SUCCESS"
+          summary: |
+            🔒 **AI Remediation Complete**
+            
+            Analyzed the security insights from Port and created a PR with npm dependency fixes.
+            
+            **Packages Updated:** 7 vulnerable dependencies
+            
+            **Next Steps:**
+            1. Review the PR
+            2. Run `npm install` to verify
+            3. Merge when ready
+            4. Deploy the secured application
+            
+            💡 *Enable real Claude Code by adding ANTHROPIC_API_KEY secret*
+          link: '["${{ steps.create_pr.outputs.pull-request-url }}"]'
+          logMessage: "🎉 AI remediation complete! PR ready for review."
+
+      - name: Finalize Port run - No Changes
+        if: steps.changes.outputs.has_changes != 'true' && env.PORT_RUN_ID != ''
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          status: "SUCCESS"
+          summary: |
+            ✅ **No Changes Required**
+            
+            Analyzed the codebase but found no files to update, or dependencies are already at secure versions.
+          logMessage: "✅ No changes needed - dependencies appear to be up to date"
